@@ -1,0 +1,5 @@
+# depslib dependency file v1.0
+1740157629 source:d:\game\demosdl\main.cpp
+	<iostream>
+	<SDL.h>
+
