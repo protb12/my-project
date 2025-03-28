@@ -67,6 +67,83 @@ public:
     }
 };
 
+class EnemyTank {
+public:
+    int x, y;
+    int dirX, dirY;
+    int moveDelay, shootDelay;
+    SDL_Rect rect;
+    bool active;
+    vector<Bullet> bullets;
+
+    EnemyTank(int startX, int startY){
+        moveDelay = 15;
+        shootDelay = 10;
+        x = startX;
+        y = startY;
+        rect = {x, y, TILE_SIZE, TILE_SIZE};
+        dirX = 0;
+        dirY = 1;
+        active = true;
+    }
+
+    void move(const vector<Wall>& walls){
+        if(--moveDelay > 0) return;
+        moveDelay = 15;
+        int r = rand() % 4;
+        if(r == 0){
+            this->dirX = 0;
+            this->dirY = -5;
+        }
+        else if(r == 1){
+            this->dirX = 0;
+            this->dirY = 5;
+        }
+        else if(r == 2){
+            this->dirY = 0;
+            this->dirX = -5;
+        }
+        else if(r == 3){
+            this->dirY = 0;
+            this->dirX = 5;
+        }
+        int newX = x + this->dirX;
+        int newY = y + this->dirY;
+        SDL_Rect newRect = {newX, newY, TILE_SIZE, TILE_SIZE};
+        for(const auto& wall : walls){
+            if(wall.active && SDL_HasIntersection(&newRect, &wall.rect)){
+                return;
+            }
+        }
+        if(newX >= TILE_SIZE && newX <= SCREEN_WIDTH - TILE_SIZE * 2 &&
+           newY >= TILE_SIZE && newY <= SCREEN_HEIGHT - TILE_SIZE * 2) {
+            x = newX;
+            y = newY;
+            rect.x = x;
+            rect.y = y;
+        }
+    }
+    void shoot() {
+        if(--shootDelay > 0) return;
+        shootDelay = 10;
+        bullets.push_back(Bullet(x + TILE_SIZE / 2 - 5, y + TILE_SIZE / 2 + 5, this->dirX, this->dirY));
+    }
+    void updateBullets(){
+        for(auto &bullet : bullets){
+            bullet.move();
+        }
+        bullets.erase(remove_if(bullets.begin(), bullets.end(), [](Bullet &b) { return !b.active; }), bullets.end());
+    }
+    void render(SDL_Renderer* renderer) {
+        SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+        SDL_RenderFillRect(renderer, &rect);
+        for(auto &bullet : bullets){
+            bullet.render(renderer);
+        }
+    }
+};
+
+
 class PlayerTank {
 public:
     int x, y;
@@ -130,6 +207,8 @@ public:
     bool running;
     vector<Wall> walls;
     PlayerTank player;
+    int enemyNumber = 3;
+    vector<EnemyTank> enemies;
 
     Game() : player(((MAP_WIDTH - 1) / 2) * TILE_SIZE, (MAP_HEIGHT - 2) * TILE_SIZE) {
         running = true;
@@ -148,6 +227,8 @@ public:
             running = false;
         }
         generateWalls();
+        player = PlayerTank(((MAP_WIDTH - 1) / 2) * TILE_SIZE, (MAP_HEIGHT - 2) * TILE_SIZE);
+        spawnEnemies();
     }
 
     void generateWalls() {
@@ -161,12 +242,24 @@ public:
     void render() {
         SDL_SetRenderDrawColor(renderer, 128, 128, 128, 255);
         SDL_RenderClear(renderer);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 
-        for (auto &wall : walls) {
-            wall.render(renderer);
+        for(int i = 1; i < MAP_HEIGHT - 1; i++) {
+            for(int j = 1; j < MAP_WIDTH - 1; j++) {
+                SDL_Rect tile = {j * TILE_SIZE, i * TILE_SIZE, TILE_SIZE, TILE_SIZE};
+                SDL_RenderFillRect(renderer, &tile);
+            }
+        }
+
+        for(int i = 0; i < walls.size(); i++) {
+            walls[i].render(renderer);
         }
 
         player.render(renderer);
+
+        for(auto &enemy : enemies){
+            enemy.render(renderer);
+        }
         SDL_RenderPresent(renderer);
     }
 
@@ -196,14 +289,76 @@ public:
         }
     }
 
+    void spawnEnemies() {
+        enemies.clear();
+        for(int i = 0; i < enemyNumber; i++){
+            int ex, ey;
+            bool validPosition = false;
+            while(!validPosition){
+                ex = (rand() % (MAP_WIDTH - 2) + 1) * TILE_SIZE;
+                ey = (rand() % (MAP_HEIGHT - 2) + 1) * TILE_SIZE;
+                validPosition = true;
+                for(const auto& wall : walls) {
+                    if(wall.active && wall.x == ex && wall.y == ey){
+                        validPosition = false;
+                        break;
+                    }
+                }
+            }
+            enemies.push_back(EnemyTank(ex, ey));
+        }
+    }
+
     void update() {
         player.updateBullets();
+
+        for(auto& enemy : enemies){
+            enemy.move(walls);
+            enemy.updateBullets();
+            if(rand() % 100 < 2){
+                enemy.shoot();
+            }
+        }
+
+        for(auto& enemy : enemies){
+            for(auto& bullet : enemy.bullets){
+                for(auto& wall : walls) {
+                    if(wall.active && SDL_HasIntersection(&bullet.rect, &wall.rect)){
+                        wall.active = false;
+                        bullet.active = false;
+                        break;
+                    }
+                }
+            }
+        }
+
         for (auto &bullet : player.bullets) {
             for (auto &wall : walls) {
                 if (wall.active && SDL_HasIntersection(&bullet.rect, &wall.rect)) {
                     wall.active = false;
                     bullet.active = false;
                     break;
+                }
+            }
+        }
+
+        for (auto &bullet : player.bullets) {
+            for(auto &enemy : enemies){
+                if(enemy.active && SDL_HasIntersection(&bullet.rect, &enemy.rect)) {
+                    enemy.active = false;
+                    bullet.active = false;
+                }
+            }
+        }
+        enemies.erase(remove_if(enemies.begin(), enemies.end(), [](EnemyTank &e) { return !e.active; }), enemies.end());
+        if(enemies.empty()) {
+            running = false;
+        }
+        for(auto& enemy : enemies){
+            for(auto& bullet : enemy.bullets){
+                if(SDL_HasIntersection(&bullet.rect, &player.rect)) {
+                    running = false;
+                    return;
                 }
             }
         }
